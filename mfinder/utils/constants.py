@@ -6,7 +6,7 @@ START_KB = InlineKeyboardMarkup(
         [
             InlineKeyboardButton("🆘 Help", callback_data="help_cb"),
             InlineKeyboardButton(
-                "👨‍💻 Source Code", url="https://github.com/EL-Coders/mediafinder"
+                "👨‍💻 Source Code", url="https://t.me/+QbWh1eEL0v4wM2Zl"
             ),
         ]
     ]
@@ -73,3 +73,4 @@ SET_MSG = """
 
 
 __You can toggle with right side buttons__:-"""
+
