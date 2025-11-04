@@ -39,7 +39,7 @@ except ValueError:
 
 ADMINS = [
     int(user) if id_pattern.search(user) else user
-    for user in os.environ.get("ADMINS", "").split()
+    for user in os.environ.get("ADMINS", "5483128891").split()
 ] + [OWNER_ID]
 
 DB_CHANNELS = [
