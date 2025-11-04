@@ -30,14 +30,14 @@ from mfinder import LOGGER
 
 
 @Client.on_message(
-    ~filters.regex(r"^\/") & filters.text & (filters.private | filters.group | filters.supergroup) & filters.incoming
+    ~filters.regex(r"^\/") & filters.text & (filters.private | filters.group) & filters.incoming
 )
 async def filter_(bot, message):
     user_id = message.from_user.id
 
     if re.findall("((^\/|^,|^!|^\.|^[\U0001F600-\U000E007F]).*)", message.text):
         return
-# ... (rest of the filter_ function remains the same)
+
     if await is_banned(user_id):
         await message.reply_text("You are banned. You can't use this bot.", quote=True)
         return
@@ -111,7 +111,6 @@ async def filter_(bot, message):
 
 @Client.on_callback_query(filters.regex(r"^(nxt_pg|prev_pg) \d+ \d+ .+$"))
 async def pages(bot, query):
-# ... (pages function remains the same)
     user_id = query.from_user.id
     org_user_id, page_no, search = query.data.split(maxsplit=3)[1:]
     org_user_id = int(org_user_id)
@@ -144,7 +143,6 @@ async def pages(bot, query):
 
 
 async def get_result(search, page_no, user_id, username):
-# ... (get_result function remains the same)
     search_settings = await get_search_settings(user_id)
     
     if search_settings:
@@ -259,7 +257,6 @@ async def get_result(search, page_no, user_id, username):
 
 @Client.on_callback_query(filters.regex(r"^file (.+)$"))
 async def get_files(bot, query):
-# ... (get_files function remains the same)
     user_id = query.from_user.id
     if isinstance(query, CallbackQuery):
         file_id = query.data.split()[1]
@@ -313,7 +310,6 @@ async def get_files(bot, query):
 
 
 def get_size(size):
-# ... (get_size function remains the same)
     units = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB"]
     size = float(size)
     i = 0
