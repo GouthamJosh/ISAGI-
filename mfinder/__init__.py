@@ -44,7 +44,7 @@ ADMINS = [
 
 DB_CHANNELS = [
     int(ch) if id_pattern.search(ch) else ch
-    for ch in os.environ.get("DB_CHANNELS", "").split()
+    for ch in os.environ.get("DB_CHANNELS", "-1002535305516").split()
 ]
 
 # --- Import constants safely ---
