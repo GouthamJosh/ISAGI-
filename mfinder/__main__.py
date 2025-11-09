@@ -1,6 +1,6 @@
 # CREDITS TO @CyberTGX
 
-import uvloop
+import asyncio
 from pyrogram import Client, idle, __version__
 from pyrogram.raw.all import layer
 from aiohttp import web
@@ -11,8 +11,6 @@ try:
 except ImportError:
     print("Warning: Could not import start_mongo. Database connection must be handled manually.")
     start_mongo = lambda: None
-
-uvloop.install()
 
 routes = web.RouteTableDef()
 
@@ -64,4 +62,4 @@ async def main():
 
         print(f"{me.first_name} - @{me.username} - Stopped !!!")
         
-uvloop.run(main())
+asyncio.run(main())
