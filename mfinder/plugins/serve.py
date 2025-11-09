@@ -31,7 +31,7 @@ from mfinder import LOGGER
 
 
 @Client.on_message(
-    ~filters.regex(r"^\/") & filters.text & filters.private & filters.incoming
+    ~filters.regex(r"^\/") & filters.group | filters.private & filters.text & filters.incoming
 )
 async def filter_(bot, message):
     user_id = message.from_user.id
