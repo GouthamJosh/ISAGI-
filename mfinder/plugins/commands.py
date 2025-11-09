@@ -12,6 +12,9 @@ from mfinder import LOGGER, ADMINS, START_MSG, HELP_MSG, START_KB, HELP_KB
 from mfinder.utils.util_support import humanbytes, get_db_size
 from mfinder.plugins.serve import send_file  # Updated import to send_file for deep-linking
 
+from mfinder import ADMINS  # make sure ADMINS is imported from config
+from mfinder.db.settings_sql import SETTINGS_COLLECTION  # we’ll use this directly
+from pymongo import UpdateMany
 
 @Client.on_message(filters.command(["start"]))
 async def start(bot, update):
@@ -152,71 +155,77 @@ async def user_settings(bot, update):
         reply_markup=set_kb,
     )
 
-
 @Client.on_callback_query(filters.regex(r"^prec (.+)$"))
 async def set_precise_mode(bot, query):
     user_id = query.from_user.id
+
+    # Check if user is admin
+    if user_id not in ADMINS:
+        await query.answer("❌ Only admins can change settings!", show_alert=True)
+        return
+
     prsc_mode = query.data.split()[1]
     if prsc_mode == "on":
         await change_search_settings(user_id, precise_mode=True)
-    if prsc_mode == "off":
+        # Apply to all users globally
+        with INSERTION_LOCK:
+            SETTINGS_COLLECTION.update_many({}, {"$set": {"precise_mode": True}})
+    elif prsc_mode == "off":
         await change_search_settings(user_id, precise_mode=False)
-    if prsc_mode == "md":
+        with INSERTION_LOCK:
+            SETTINGS_COLLECTION.update_many({}, {"$set": {"precise_mode": False}})
+    elif prsc_mode == "md":
         await query.answer(text="Toggle Precise Search ON/OFF", show_alert=False)
         return
 
     set_kb = await find_search_settings(user_id)
-
-    await query.message.edit(
-        text=SET_MSG,
-        reply_markup=set_kb,
-    )
+    await query.message.edit(text=SET_MSG, reply_markup=set_kb)
 
 
 @Client.on_callback_query(filters.regex(r"^res (.+)$"))
 async def set_list_mode(bot, query):
     user_id = query.from_user.id
+
+    # Only admins can change
+    if user_id not in ADMINS:
+        await query.answer("❌ Only admins can change settings!", show_alert=True)
+        return
+
     result_mode = query.data.split()[1]
     if result_mode == "btnn":
-        await change_search_settings(
-            user_id, button_mode=True, link_mode=False, list_mode=False
-        )
-    if result_mode == "link":
-        await change_search_settings(
-            user_id, button_mode=False, link_mode=True, list_mode=False
-        )
-    if result_mode == "list":
-        await change_search_settings(
-            user_id, button_mode=False, link_mode=False, list_mode=True
-        )
-    if result_mode == "mode":
+        await change_search_settings(user_id, button_mode=True, link_mode=False, list_mode=False)
+        with INSERTION_LOCK:
+            SETTINGS_COLLECTION.update_many({}, {"$set": {"button_mode": True, "link_mode": False, "list_mode": False}})
+    elif result_mode == "link":
+        await change_search_settings(user_id, button_mode=False, link_mode=True, list_mode=False)
+        with INSERTION_LOCK:
+            SETTINGS_COLLECTION.update_many({}, {"$set": {"button_mode": False, "link_mode": True, "list_mode": False}})
+    elif result_mode == "list":
+        await change_search_settings(user_id, button_mode=False, link_mode=False, list_mode=True)
+        with INSERTION_LOCK:
+            SETTINGS_COLLECTION.update_many({}, {"$set": {"button_mode": False, "link_mode": False, "list_mode": True}})
+    elif result_mode == "mode":
         await query.answer(text="Toggle Button/Link/List Mode", show_alert=False)
         return
 
     set_kb = await find_search_settings(user_id)
-
-    await query.message.edit(
-        text=SET_MSG,
-        reply_markup=set_kb,
-    )
-
+    await query.message.edit(text=SET_MSG, reply_markup=set_kb)
 
 async def find_search_settings(user_id):
     search_settings = await get_search_settings(user_id)
+
+    is_admin = user_id in ADMINS
 
     kb = [
         InlineKeyboardButton("[Precise Mode]:", callback_data="prec md"),
     ]
 
-    on_kb = InlineKeyboardButton("❌ Disabled", callback_data="prec on")
-    off_kb = InlineKeyboardButton("✅ Enabled", callback_data="prec off")
+    on_kb = InlineKeyboardButton("❌ Disabled", callback_data="prec on" if is_admin else "disabled")
+    off_kb = InlineKeyboardButton("✅ Enabled", callback_data="prec off" if is_admin else "disabled")
 
     if search_settings:
         precise_mode = search_settings.get("precise_mode", False)
-        if precise_mode:
-            kb.append(off_kb)
-        else:
-            kb.append(on_kb)
+        kb.append(off_kb if precise_mode else on_kb)
     else:
         await change_search_settings(user_id)
         kb.append(on_kb)
@@ -225,15 +234,14 @@ async def find_search_settings(user_id):
         InlineKeyboardButton("[Result Mode]:", callback_data="res mode"),
     ]
 
-    btn_kb = InlineKeyboardButton("📃 List", callback_data="res btnn")
-    link_kb = InlineKeyboardButton("🔳 Button", callback_data="res link")
-    list_kb = InlineKeyboardButton("🔗 HyperLink", callback_data="res list")
+    btn_kb = InlineKeyboardButton("📃 List", callback_data="res btnn" if is_admin else "disabled")
+    link_kb = InlineKeyboardButton("🔳 Button", callback_data="res link" if is_admin else "disabled")
+    list_kb = InlineKeyboardButton("🔗 HyperLink", callback_data="res list" if is_admin else "disabled")
 
     if search_settings:
         button_mode = search_settings.get("button_mode", False)
         link_mode = search_settings.get("link_mode", False)
         list_mode = search_settings.get("list_mode", False)
-
         if button_mode:
             bkb.append(link_kb)
         elif link_mode:
@@ -247,5 +255,13 @@ async def find_search_settings(user_id):
         await change_search_settings(user_id, link_mode=True)
         bkb.append(btn_kb)
 
+    if not is_admin:
+        kb.append(InlineKeyboardButton("🔒 Admin Only", callback_data="disabled"))
+        bkb.append(InlineKeyboardButton("🔒 Admin Only", callback_data="disabled"))
+
     set_kb = InlineKeyboardMarkup([kb, bkb])
     return set_kb
+
+@Client.on_callback_query(filters.regex(r"^disabled$"))
+async def no_access(bot, query):
+    await query.answer("🚫 Only admins can change this setting.", show_alert=True)
