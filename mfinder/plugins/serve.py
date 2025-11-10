@@ -1,4 +1,4 @@
-#CREDITS TO @im_goutham_josh
+# CREDITS TO @im_goutham_josh
 
 import re
 import asyncio
@@ -28,75 +28,114 @@ from mfinder.db.ban_sql import is_banned
 from mfinder.db.filters_sql import is_filter
 from mfinder import LOGGER
 
-@Client.on_message(filters.group | filters.private & filters.text & filters.incoming)
+
+# ======================================================
+# 🔍 Handle all text messages (Private or Group)
+# ======================================================
+@Client.on_message((filters.group | filters.private) & filters.text & filters.incoming)
 async def give_filter(bot, message):
     await filter_(bot, message)
 
+
+# ======================================================
+# 🔍 Main Search Handler (Private)
+# ======================================================
 @Client.on_message(
-    ~filters.regex(r"^\/") & filters.text & filters.private & filters.incoming
+    ~filters.regex(r"^/") & filters.text & filters.private & filters.incoming
 )
 async def filter_(bot, message):
     user_id = message.from_user.id
 
-    if re.findall("((^\/|^,|^!|^\.|^[\U0001F600-\U000E007F]).*)", message.text):
+    # Ignore command-like or emoji-only messages
+    if re.findall(r"(^[/.,!]|^[\U0001F600-\U000E007F])", message.text):
         return
 
+    # Banned user check
     if await is_banned(user_id):
-        await message.reply_text("You are banned. You can't use this bot.")  # Removed quote=True
+        await message.reply_text("🚫 You are banned. You can't use this bot.", quote=True)
         return
 
-    # Force sub check now handled in send_file for consistency (removed from here to avoid duplication)
-    # But keep a quick check for private searches if needed (optional, as send_file will handle it)
-
-    admin_settings = await get_admin_settings()
-    if admin_settings:
-        if admin_settings.get('repair_mode'):
+    # 🔒 Force Sub Check
+    force_sub = await get_channel()
+    if force_sub:
+        try:
+            user = await bot.get_chat_member(int(force_sub), user_id)
+            if user.status == ChatMemberStatus.BANNED:
+                await message.reply_text("❌ You are banned from using this bot.", quote=True)
+                return
+        except UserNotParticipant:
+            link = await get_link()
+            await message.reply_text(
+                "**Please join my Update Channel to use this Bot!**",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🤖 Join Channel", url=link)]]
+                ),
+                parse_mode=ParseMode.MARKDOWN,
+                quote=True,
+            )
+            return
+        except Exception as e:
+            LOGGER.warning(f"ForceSub Error: {e}")
+            await message.reply_text(
+                "⚠️ Something went wrong with the channel check. Please contact support.",
+                quote=True,
+            )
             return
 
-    fltr = await is_filter(message.text)
-    if fltr:
-        await message.reply_text(
-            text=fltr.message,
-        )  # Removed quote=True
+    # Repair mode
+    admin_settings = await get_admin_settings()
+    if admin_settings and admin_settings.get("repair_mode"):
         return
 
+    # Text filter (custom responses)
+    fltr = await is_filter(message.text)
+    if fltr:
+        await message.reply_text(fltr.message, quote=True)
+        return
+
+    # Perform file search
     if 2 < len(message.text) < 100:
         search = message.text
         page_no = 1
-        me = bot.me
+        me = await bot.get_me()
         username = me.username
         result, btn = await get_result(search, page_no, user_id, username)
 
         if result:
             reply = await message.reply_text(
-                f"{result}",
+                result,
                 reply_markup=InlineKeyboardMarkup(btn),
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
-            )  # Removed quote=True
-            # Delete after 10 minutes (600 seconds)
+                quote=True,
+            )
             asyncio.create_task(delete_after(reply, message, 600))
         else:
             reply = await message.reply_text(
-                text="No results found.\nOr retry with the correct spelling 🤐",
-            )  # Removed quote=True
-            # Delete after 30 seconds
+                "No results found.\nTry again with the correct spelling 🤐",
+                quote=True,
+            )
             asyncio.create_task(delete_after(reply, message, 30))
 
+
+# ======================================================
+# 📖 Pagination Handler
+# ======================================================
 @Client.on_callback_query(filters.regex(r"^(nxt_pg|prev_pg) \d+ \d+ .+$"))
 async def pages(bot, query):
     user_id = query.from_user.id
-    org_user_id, page_no, search = query.data.split(maxsplit=3)[1:]
+    _, org_user_id, page_no, search = query.data.split(maxsplit=3)
     org_user_id = int(org_user_id)
     page_no = int(page_no)
-    me = bot.me
+
+    me = await bot.get_me()
     username = me.username
 
     result, btn = await get_result(search, page_no, user_id, username)
 
     if result:
         try:
-            await query.message.edit(
-                f"{result}",
+            await query.message.edit_text(
+                result,
                 reply_markup=InlineKeyboardMarkup(btn),
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
@@ -104,117 +143,87 @@ async def pages(bot, query):
             pass
     else:
         await query.message.reply_text(
-            text="No results found.\nOr retry with the correct spelling 🤐",
-        )  # Removed quote=True
+            "No more results found.",
+            quote=True,
+        )
 
+
+# ======================================================
+# 🔍 File Search Function
+# ======================================================
 async def get_result(search, page_no, user_id, username):
     search_settings = await get_search_settings(user_id)
-    
-    if search_settings:
-        if search_settings.get('precise_mode'):
-            files, count = await get_precise_filter_results(query=search, page=page_no)
-            precise_search = "Enabled"
-        else:
-            files, count = await get_filter_results(query=search, page=page_no)
-            precise_search = "Disabled"
+
+    if search_settings and search_settings.get("precise_mode"):
+        files, count = await get_precise_filter_results(query=search, page=page_no)
+        precise_search = "Enabled"
     else:
         files, count = await get_filter_results(query=search, page=page_no)
         precise_search = "Disabled"
 
-    # Force button mode only
-    button_mode = "ON"
-    link_mode = "OFF"
-    search_md = "Button"
+    if not files:
+        return None, None
 
-    if files:
-        btn = []
-        index = (page_no - 1) * 10
-        crnt_pg = index // 10 + 1
-        tot_pg = (count + 10 - 1) // 10
-        result = f"**Search Query:** `{search}`\n**Total Results:** `{count}`\n**Page:** `{crnt_pg}/{tot_pg}`\n**Precise Search: **`{precise_search}`\n**Result Mode:** `{search_md}`\n"
-        page = page_no
-        for file in files:
-            file_id = file.file_id
-            filename = f"[{get_size(file.file_size)}]{file.file_name}"
-            btn_kb = InlineKeyboardButton(
-                text=f"{filename}", url=f"https://t.me/{username}?start={file_id}"
-            )
-            btn.append([btn_kb])
+    btn = []
+    index = (page_no - 1) * 10
+    crnt_pg = index // 10 + 1
+    tot_pg = (count + 9) // 10
 
-        nxt_kb = InlineKeyboardButton(
-            text="Next >>",
-            callback_data=f"nxt_pg {user_id} {page + 1} {search}",
-        )
-        prev_kb = InlineKeyboardButton(
-            text="<< Previous",
-            callback_data=f"prev_pg {user_id} {page - 1} {search}",
+    result = (
+        f"**Search Query:** `{search}`\n"
+        f"**Total Results:** `{count}`\n"
+        f"**Page:** `{crnt_pg}/{tot_pg}`\n"
+        f"**Precise Search:** `{precise_search}`\n"
+        f"**Result Mode:** `Button`\n\n"
+        "🔻 __Tap a file below to download.__ 🔻"
+    )
+
+    for file in files:
+        file_id = file.file_id
+        filename = f"[{get_size(file.file_size)}] {file.file_name}"
+        btn.append(
+            [InlineKeyboardButton(text=filename, url=f"https://t.me/{username}?start={file_id}")]
         )
 
-        kb = []
-        if crnt_pg == 1 and tot_pg > 1:
-            kb = [nxt_kb]
-        elif crnt_pg > 1 and crnt_pg < tot_pg:
-            kb = [prev_kb, nxt_kb]
-        elif tot_pg > 1:
-            kb = [prev_kb]
+    # Pagination buttons
+    kb = []
+    if crnt_pg == 1 and tot_pg > 1:
+        kb = [InlineKeyboardButton("Next >>", callback_data=f"nxt_pg {user_id} {page_no + 1} {search}")]
+    elif 1 < crnt_pg < tot_pg:
+        kb = [
+            InlineKeyboardButton("<< Previous", callback_data=f"prev_pg {user_id} {page_no - 1} {search}"),
+            InlineKeyboardButton("Next >>", callback_data=f"nxt_pg {user_id} {page_no + 1} {search}")
+        ]
+    elif crnt_pg == tot_pg and tot_pg > 1:
+        kb = [InlineKeyboardButton("<< Previous", callback_data=f"prev_pg {user_id} {page_no - 1} {search}")]
 
-        if kb:
-            btn.append(kb)
+    if kb:
+        btn.append(kb)
 
-        result = (
-            result
-            + "\n\n"
-            + "🔻 __Tap on below corresponding file to download.__ 🔻"
-        )
+    return result, btn
 
-        return result, btn
 
-    return None, None
-
+# ======================================================
+# 📤 Send File
+# ======================================================
 async def send_file(bot, chat_id, file_id):
-    # NEW: Centralized force sub check before sending ANY file
-    # This ensures subscription is verified regardless of how the file is requested (search, /start, callback, etc.)
-    user_id = chat_id  # Assuming chat_id is the user_id for private sends; adjust if needed for groups
-    force_sub = await get_channel()
-    if force_sub:
-        try:
-            user = await bot.get_chat_member(int(force_sub), user_id)
-            if user.status == ChatMemberStatus.BANNED:
-                await bot.send_message(chat_id, "Sorry, you are Banned to use me.")  # Removed quote=True
-                return
-        except UserNotParticipant:
-            link = await get_link()
-            await bot.send_message(
-                chat_id,
-                text="**Please join my Update Channel to use this Bot!**",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🤖 Join Channel", url=link)]]
-                ),
-                parse_mode=ParseMode.MARKDOWN,
-            )  # Removed quote=True
-            return
-        except Exception as e:
-            LOGGER.warning(f"Force sub check failed for user {user_id}: {e}")
-            await bot.send_message(
-                chat_id,
-                text="Something went wrong with subscription check. Please contact support.",
-            )  # Removed quote=True
-            return
-
-    # Proceed with sending the file only if force sub is satisfied
     filedetails = await get_file_details(file_id)
     admin_settings = await get_admin_settings()
+
+    if not filedetails:
+        await bot.send_message(chat_id, "❌ File not found.")
+        return
+
     for files in filedetails:
-        f_caption = files.caption
-        if admin_settings.get('custom_caption'):
-            f_caption = admin_settings.get('custom_caption')
-        elif f_caption is None:
-            f_caption = f"{files.file_name}"
+        f_caption = files.caption or f"{files.file_name}"
 
-        f_caption = "`" + f_caption + "`"
+        if admin_settings.get("custom_caption"):
+            f_caption = admin_settings["custom_caption"]
 
-        if admin_settings.get('caption_uname'):
-            f_caption = f_caption + "\n" + admin_settings.get('caption_uname')
+        f_caption = f"`{f_caption}`"
+
+        if admin_settings.get("caption_uname"):
+            f_caption += "\n" + admin_settings["caption_uname"]
 
         msg = await bot.send_cached_media(
             chat_id=chat_id,
@@ -223,48 +232,67 @@ async def send_file(bot, chat_id, file_id):
             parse_mode=ParseMode.MARKDOWN,
         )
 
-        if admin_settings.get('auto_delete'):
-            delay_dur = admin_settings.get('auto_delete')
-            delay = delay_dur / 60 if delay_dur > 60 else delay_dur
-            delay = round(delay, 2)
-            minsec = str(delay) + " mins" if delay_dur > 60 else str(delay) + " secs"
+        # Auto delete feature
+        if admin_settings.get("auto_delete"):
+            delay_dur = admin_settings["auto_delete"]
+            delay_text = (
+                f"{round(delay_dur / 60, 2)} mins" if delay_dur > 60 else f"{delay_dur} secs"
+            )
+
             disc = await bot.send_message(
                 chat_id,
-                f"Please save the file to your saved messages, it will be deleted in {minsec}",
+                f"⚠️ Save this file — it will be deleted in {delay_text}.",
             )
-            await asyncio.sleep(delay_dur)
-            await disc.delete()
-            await msg.delete()
-            await bot.send_message(chat_id, "File has been deleted")
 
+            await asyncio.sleep(delay_dur)
+            try:
+                await disc.delete()
+                await msg.delete()
+                await bot.send_message(chat_id, "🗑 File deleted automatically.")
+            except Exception as e:
+                LOGGER.warning(f"Auto-delete failed: {e}")
+
+
+# ======================================================
+# 📦 File Callback
+# ======================================================
 @Client.on_callback_query(filters.regex(r"^file (.+)$"))
 async def get_files(bot, query):
     user_id = query.from_user.id
     file_id = query.data.split()[1]
-    await query.answer("Sending file...", cache_time=60)
+    await query.answer("📤 Sending file...", cache_time=60)
     await send_file(bot, user_id, file_id)
 
+
+# ======================================================
+# 👋 Start Command
+# ======================================================
 @Client.on_message(filters.private & filters.command("start"))
 async def start(bot, message):
     if len(message.command) > 1:
         file_id = message.command[1]
         user_id = message.from_user.id
-
-        # Force sub check removed from here (now handled in send_file for consistency)
         await send_file(bot, user_id, file_id)
     else:
-        await message.reply_text("Welcome! Send me a search query.")
+        await message.reply_text("👋 Welcome! Send me a search query.")
 
+
+# ======================================================
+# ⚙️ Utilities
+# ======================================================
 def get_size(size):
+    """Convert file size to readable format."""
     units = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB"]
     size = float(size)
     i = 0
-    while size >= 1024.0 and i < len(units):
-        i += 1
+    while size >= 1024.0 and i < len(units) - 1:
         size /= 1024.0
+        i += 1
     return f"{size:.2f} {units[i]}"
 
+
 async def delete_after(bot_msg, user_msg, delay):
+    """Delete messages after a given delay."""
     await asyncio.sleep(delay)
     try:
         await bot_msg.delete()
