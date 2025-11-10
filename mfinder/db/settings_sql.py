@@ -161,40 +161,52 @@ async def set_channel_link(link: str):
     except Exception as e:
         LOGGER.warning("Error adding Force Sub channel link: %s ", str(e))
 
+# ✅ Corrected get_channel() and get_link() functions
 
-async def get_channel() -> float | bool:
-    """Retrieves the force sub channel ID."""
+async def get_channel() -> int | bool:
+    """Retrieve the Force Sub (update channel) ID as an integer."""
     try:
         channel_doc = ADMIN_COLLECTION.find_one(
-            {"setting_name": "default"}, 
+            {"setting_name": "default"},
             {"fsub_channel": 1, "_id": 0}
         )
-        
+
         if channel_doc and channel_doc.get("fsub_channel") is not None:
-            return channel_doc["fsub_channel"]
+            try:
+                # Ensure it's an integer (not float/string)
+                return int(channel_doc["fsub_channel"])
+            except (ValueError, TypeError):
+                LOGGER.warning(
+                    f"Invalid channel ID format: {channel_doc.get('fsub_channel')}"
+                )
+                return False
         return False
-        
+
     except Exception as e:
         LOGGER.warning("Error getting channel: %s", str(e))
         return False
 
 
 async def get_link() -> str | bool:
-    """Retrieves the channel link."""
+    """Retrieve the Force Sub channel invite link."""
     try:
         link_doc = ADMIN_COLLECTION.find_one(
-            {"setting_name": "default"}, 
+            {"setting_name": "default"},
             {"channel_link": 1, "_id": 0}
         )
-        
+
         if link_doc and link_doc.get("channel_link") is not None:
-            return link_doc["channel_link"]
+            link = str(link_doc["channel_link"]).strip()
+            if link.startswith("https://t.me/"):
+                return link
+            else:
+                LOGGER.warning(f"Invalid link format: {link}")
+                return False
         return False
-        
+
     except Exception as e:
         LOGGER.warning("Error getting link: %s", str(e))
         return False
-
 
 async def set_username(username: str):
     try:
