@@ -1,5 +1,6 @@
-# CREDITS TO @im_goutham_josh
+#CREDITS TO @im_goutham_josh
 
+import os
 import re
 import asyncio
 from pyrogram import Client, filters
@@ -18,92 +19,92 @@ from mfinder.db.files_sql import (
     get_file_details,
     get_precise_filter_results,
 )
-from mfinder.db.settings_sql import (
-    get_search_settings,
-    get_admin_settings,
-    get_link,
-    get_channel,
-)
+from mfinder.db.settings_sql import get_search_settings, get_admin_settings
 from mfinder.db.ban_sql import is_banned
 from mfinder.db.filters_sql import is_filter
 from mfinder import LOGGER
 
 
-# ======================================================
-# 🔍 Handle all text messages (Private or Group)
-# ======================================================
-@Client.on_message((filters.group | filters.private) & filters.text & filters.incoming)
+# 🔹 Multiple channel IDs separated by spaces
+# Example: AUTH_CHANNEL="-1001234567890 -1002222222222 -1003333333333"
+AUTH_CHANNELS = os.getenv("AUTH_CHANNEL", "-1002544102492").split()
+
+
+@Client.on_message(filters.group | filters.private & filters.text & filters.incoming)
 async def give_filter(bot, message):
     await filter_(bot, message)
 
 
-# ======================================================
-# 🔍 Main Search Handler (Private)
-# ======================================================
-@Client.on_message(
-    ~filters.regex(r"^/") & filters.text & filters.private & filters.incoming
-)
+@Client.on_message(~filters.regex(r"^\/") & filters.text & filters.private & filters.incoming)
 async def filter_(bot, message):
     user_id = message.from_user.id
 
-    # Ignore command-like or emoji-only messages
-    if re.findall(r"(^[/.,!]|^[\U0001F600-\U000E007F])", message.text):
+    # Ignore prefixed commands
+    if re.findall("((^\/|^,|^!|^\.|^[\U0001F600-\U000E007F]).*)", message.text):
         return
 
-    # Banned user check
+    # Check banned
     if await is_banned(user_id):
-        await message.reply_text("🚫 You are banned. You can't use this bot.", quote=True)
+        await message.reply_text("You are banned. You can't use this bot.", quote=True)
         return
 
-    # 🔒 Force Sub Check
-    force_sub = await get_channel()
-    if force_sub:
-        try:
-            user = await bot.get_chat_member(int(force_sub), user_id)
-            if user.status == ChatMemberStatus.BANNED:
-                await message.reply_text("❌ You are banned from using this bot.", quote=True)
-                return
-        except UserNotParticipant:
-            link = await get_link()
+    # 🔹 Multi Force Sub Check (ENV)
+    if AUTH_CHANNELS:
+        not_joined = []
+        for channel_id in AUTH_CHANNELS:
+            try:
+                user = await bot.get_chat_member(int(channel_id), user_id)
+                if user.status == ChatMemberStatus.BANNED:
+                    await message.reply_text("Sorry, you are banned from one of the channels.", quote=True)
+                    return
+            except UserNotParticipant:
+                not_joined.append(channel_id)
+            except Exception as e:
+                LOGGER.warning(f"ForceSub error for {channel_id}: {e}")
+
+        if not_joined:
+            buttons = []
+            for ch_id in not_joined:
+                try:
+                    chat = await bot.get_chat(int(ch_id))
+                    link = chat.invite_link or await chat.export_invite_link()
+                    btn = InlineKeyboardButton(f"📢 Join {chat.title}", url=link)
+                except Exception:
+                    link = f"https://t.me/{str(ch_id).replace('-100', '')}"
+                    btn = InlineKeyboardButton("📢 Join Channel", url=link)
+                buttons.append([btn])
+
+            buttons.append([InlineKeyboardButton("✅ Joined All", callback_data="refresh_check")])
             await message.reply_text(
-                "**Please join my Update Channel to use this Bot!**",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🤖 Join Channel", url=link)]]
-                ),
+                "**Please join all update channels to use this Bot!**",
+                reply_markup=InlineKeyboardMarkup(buttons),
                 parse_mode=ParseMode.MARKDOWN,
                 quote=True,
             )
             return
-        except Exception as e:
-            LOGGER.warning(f"ForceSub Error: {e}")
-            await message.reply_text(
-                "⚠️ Something went wrong with the channel check. Please contact support.",
-                quote=True,
-            )
-            return
 
-    # Repair mode
+    # 🔹 Repair Mode
     admin_settings = await get_admin_settings()
     if admin_settings and admin_settings.get("repair_mode"):
         return
 
-    # Text filter (custom responses)
+    # 🔹 Check Custom Filter
     fltr = await is_filter(message.text)
     if fltr:
-        await message.reply_text(fltr.message, quote=True)
+        await message.reply_text(text=fltr.message, quote=True)
         return
 
-    # Perform file search
+    # 🔹 Search logic
     if 2 < len(message.text) < 100:
         search = message.text
         page_no = 1
-        me = await bot.get_me()
+        me = bot.me
         username = me.username
         result, btn = await get_result(search, page_no, user_id, username)
 
         if result:
             reply = await message.reply_text(
-                result,
+                f"{result}",
                 reply_markup=InlineKeyboardMarkup(btn),
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
                 quote=True,
@@ -111,31 +112,47 @@ async def filter_(bot, message):
             asyncio.create_task(delete_after(reply, message, 600))
         else:
             reply = await message.reply_text(
-                "No results found.\nTry again with the correct spelling 🤐",
+                text="No results found.\nOr retry with the correct spelling 🤐",
                 quote=True,
             )
             asyncio.create_task(delete_after(reply, message, 30))
 
 
-# ======================================================
-# 📖 Pagination Handler
-# ======================================================
+# 🔹 Refresh check when user clicks “✅ Joined All”
+@Client.on_callback_query(filters.regex("^refresh_check$"))
+async def refresh_check(bot, query):
+    user_id = query.from_user.id
+    not_joined = []
+    for channel_id in AUTH_CHANNELS:
+        try:
+            user = await bot.get_chat_member(int(channel_id), user_id)
+            if user.status not in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+                not_joined.append(channel_id)
+        except Exception:
+            not_joined.append(channel_id)
+
+    if not_joined:
+        await query.answer("You haven't joined all channels yet ❌", show_alert=True)
+    else:
+        await query.answer("✅ Verified! You can now use the bot.", show_alert=True)
+        await query.message.delete()
+
+
+# 🔹 Rest of the original functions stay same
 @Client.on_callback_query(filters.regex(r"^(nxt_pg|prev_pg) \d+ \d+ .+$"))
 async def pages(bot, query):
     user_id = query.from_user.id
-    _, org_user_id, page_no, search = query.data.split(maxsplit=3)
+    org_user_id, page_no, search = query.data.split(maxsplit=3)[1:]
     org_user_id = int(org_user_id)
     page_no = int(page_no)
-
-    me = await bot.get_me()
+    me = bot.me
     username = me.username
 
     result, btn = await get_result(search, page_no, user_id, username)
-
     if result:
         try:
-            await query.message.edit_text(
-                result,
+            await query.message.edit(
+                f"{result}",
                 reply_markup=InlineKeyboardMarkup(btn),
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
@@ -143,9 +160,12 @@ async def pages(bot, query):
             pass
     else:
         await query.message.reply_text(
-            "No more results found.",
+            text="No results found.\nOr retry with the correct spelling 🤐",
             quote=True,
         )
+
+
+# (get_result, send_file, get_files, start, get_size, delete_after) remain same
 
 
 # ======================================================
