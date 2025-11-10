@@ -28,7 +28,7 @@ from mfinder.db.ban_sql import is_banned
 from mfinder.db.filters_sql import is_filter
 from mfinder import LOGGER
 
-@Client.on_message(filters.group | filters.private & filters.text & filters.incoming) #GIVE FILTER IN PM BRO IDEA OF GOUTHAM SER
+@Client.on_message(filters.group | filters.private & filters.text & filters.incoming)
 async def give_filter(bot, message):
     await filter_(bot, message)
 
@@ -45,31 +45,33 @@ async def filter_(bot, message):
         await message.reply_text("You are banned. You can't use this bot.", quote=True)
         return
 
-    force_sub = await get_channel()
-    if force_sub:
-        try:
-            user = await bot.get_chat_member(int(force_sub), user_id)
-            if user.status == ChatMemberStatus.BANNED:
-                await message.reply_text("Sorry, you are Banned to use me.", quote=True)
+    # Force sub check only in PM
+    if message.chat.type == "private":
+        force_sub = await get_channel()
+        if force_sub:
+            try:
+                user = await bot.get_chat_member(int(force_sub), user_id)
+                if user.status == ChatMemberStatus.BANNED:
+                    await message.reply_text("Sorry, you are Banned to use me.", quote=True)
+                    return
+            except UserNotParticipant:
+                link = await get_link()
+                await message.reply_text(
+                    text="**Please join my Update Channel to use this Bot!**",
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("🤖 Join Channel", url=link)]]
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                    quote=True,
+                )
                 return
-        except UserNotParticipant:
-            link = await get_link()
-            await message.reply_text(
-                text="**Please join my Update Channel to use this Bot!**",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🤖 Join Channel", url=link)]]
-                ),
-                parse_mode=ParseMode.MARKDOWN,
-                quote=True,
-            )
-            return
-        except Exception as e:
-            LOGGER.warning(e)
-            await message.reply_text(
-                text="Something went wrong, please contact my support group",
-                quote=True,
-            )
-            return
+            except Exception as e:
+                LOGGER.warning(e)
+                await message.reply_text(
+                    text="Something went wrong, please contact my support group",
+                    quote=True,
+                )
+                return
 
     admin_settings = await get_admin_settings()
     if admin_settings:
@@ -246,6 +248,34 @@ async def start(bot, message):
     if len(message.command) > 1:
         file_id = message.command[1]
         user_id = message.from_user.id
+
+        # Check force sub in PM before sending file
+        force_sub = await get_channel()
+        if force_sub:
+            try:
+                user = await bot.get_chat_member(int(force_sub), user_id)
+                if user.status == ChatMemberStatus.BANNED:
+                    await message.reply_text("Sorry, you are Banned to use me.", quote=True)
+                    return
+            except UserNotParticipant:
+                link = await get_link()
+                await message.reply_text(
+                    text="**Please join my Update Channel to use this Bot!**",
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("🤖 Join Channel", url=link)]]
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                    quote=True,
+                )
+                return
+            except Exception as e:
+                LOGGER.warning(e)
+                await message.reply_text(
+                    text="Something went wrong, please contact my support group",
+                    quote=True,
+                )
+                return
+
         await send_file(bot, user_id, file_id)
     else:
         await message.reply_text("Welcome! Send me a search query.")
