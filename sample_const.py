@@ -13,14 +13,6 @@ HELP_MSG = """
 **You can find the bot commands here.**
 **User Commands:-**
 /help - __Show this help message__
-/settings - __Toggle settings of Precise Mode and Button Mode__
-`Precise Mode:` 
-- __If Enabled, bot will match the word & return results with only the exact match__
-- __If Disabled, bot will match the word & return all the results containing the word__    
-`Result Mode:` 
-- __If Button, bot will return results in button format__
-- __If List, bot will return results in list format__
-- __If HyperLink, bot will return results in hyperlink format__
 
 **Admin Commands:-**
 /logs - __Get logs as a file__
@@ -51,7 +43,7 @@ START_KB = InlineKeyboardMarkup(
         [
             InlineKeyboardButton("🆘 Help", callback_data="help_cb"),
             InlineKeyboardButton(
-                "👨‍💻 Source Code", url="https://t.me/+QbWh1eEL0v4wM2Zl"
+                "👨‍💻 Source Code", url="https://t.me/wudixh12"
             ),
         ]
     ]
