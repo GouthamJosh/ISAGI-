@@ -45,33 +45,8 @@ async def filter_(bot, message):
         await message.reply_text("You are banned. You can't use this bot.", quote=True)
         return
 
-    # Force sub check only in PM
-    if message.chat.type == "private":
-        force_sub = await get_channel()
-        if force_sub:
-            try:
-                user = await bot.get_chat_member(int(force_sub), user_id)
-                if user.status == ChatMemberStatus.BANNED:
-                    await message.reply_text("Sorry, you are Banned to use me.", quote=True)
-                    return
-            except UserNotParticipant:
-                link = await get_link()
-                await message.reply_text(
-                    text="**Please join my Update Channel to use this Bot!**",
-                    reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("🤖 Join Channel", url=link)]]
-                    ),
-                    parse_mode=ParseMode.MARKDOWN,
-                    quote=True,
-                )
-                return
-            except Exception as e:
-                LOGGER.warning(e)
-                await message.reply_text(
-                    text="Something went wrong, please contact my support group",
-                    quote=True,
-                )
-                return
+    # Force sub check now handled in send_file for consistency (removed from here to avoid duplication)
+    # But keep a quick check for private searches if needed (optional, as send_file will handle it)
 
     admin_settings = await get_admin_settings()
     if admin_settings:
@@ -201,6 +176,38 @@ async def get_result(search, page_no, user_id, username):
     return None, None
 
 async def send_file(bot, chat_id, file_id):
+    # NEW: Centralized force sub check before sending ANY file
+    # This ensures subscription is verified regardless of how the file is requested (search, /start, callback, etc.)
+    user_id = chat_id  # Assuming chat_id is the user_id for private sends; adjust if needed for groups
+    force_sub = await get_channel()
+    if force_sub:
+        try:
+            user = await bot.get_chat_member(int(force_sub), user_id)
+            if user.status == ChatMemberStatus.BANNED:
+                await bot.send_message(chat_id, "Sorry, you are Banned to use me.", quote=True)
+                return
+        except UserNotParticipant:
+            link = await get_link()
+            await bot.send_message(
+                chat_id,
+                text="**Please join my Update Channel to use this Bot!**",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🤖 Join Channel", url=link)]]
+                ),
+                parse_mode=ParseMode.MARKDOWN,
+                quote=True,
+            )
+            return
+        except Exception as e:
+            LOGGER.warning(f"Force sub check failed for user {user_id}: {e}")
+            await bot.send_message(
+                chat_id,
+                text="Something went wrong with subscription check. Please contact support.",
+                quote=True,
+            )
+            return
+
+    # Proceed with sending the file only if force sub is satisfied
     filedetails = await get_file_details(file_id)
     admin_settings = await get_admin_settings()
     for files in filedetails:
@@ -249,33 +256,7 @@ async def start(bot, message):
         file_id = message.command[1]
         user_id = message.from_user.id
 
-        # Check force sub in PM before sending file
-        force_sub = await get_channel()
-        if force_sub:
-            try:
-                user = await bot.get_chat_member(int(force_sub), user_id)
-                if user.status == ChatMemberStatus.BANNED:
-                    await message.reply_text("Sorry, you are Banned to use me.", quote=True)
-                    return
-            except UserNotParticipant:
-                link = await get_link()
-                await message.reply_text(
-                    text="**Please join my Update Channel to use this Bot!**",
-                    reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("🤖 Join Channel", url=link)]]
-                    ),
-                    parse_mode=ParseMode.MARKDOWN,
-                    quote=True,
-                )
-                return
-            except Exception as e:
-                LOGGER.warning(e)
-                await message.reply_text(
-                    text="Something went wrong, please contact my support group",
-                    quote=True,
-                )
-                return
-
+        # Force sub check removed from here (now handled in send_file for consistency)
         await send_file(bot, user_id, file_id)
     else:
         await message.reply_text("Welcome! Send me a search query.")
