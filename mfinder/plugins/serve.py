@@ -106,40 +106,7 @@ async def filter_(bot, message):
         await message.reply_text("🚫 You are banned. You can't use this bot.", quote=True)
         return
 
-    # 🔹 ForceSub Check
-    if FORCE_SUB_ENABLED and FORCE_SUB_CHANNELS:
-        not_joined = []
-        for channel_id in FORCE_SUB_CHANNELS:
-            try:
-                user = await bot.get_chat_member(int(channel_id), user_id)
-                if user.status == ChatMemberStatus.BANNED:
-                    await message.reply_text("Sorry, you are banned from one of the required channels.", quote=True)
-                    return
-            except UserNotParticipant:
-                not_joined.append(channel_id)
-            except Exception as e:
-                LOGGER.warning(f"ForceSub error for {channel_id}: {e}")
-
-        if not_joined:
-            buttons = []
-            for ch_id in not_joined:
-                try:
-                    chat = await bot.get_chat(int(ch_id))
-                    link = chat.invite_link or await chat.export_invite_link()
-                    btn = InlineKeyboardButton(f"📢 Join {chat.title}", url=link)
-                except Exception:
-                    link = f"https://t.me/{str(ch_id).replace('-100', '')}"
-                    btn = InlineKeyboardButton("📢 Join Channel", url=link)
-                buttons.append([btn])
-
-            buttons.append([InlineKeyboardButton("✅ Joined All", callback_data="refresh_check")])
-            await message.reply_text(
-                "**Please join all required update channels to use this Bot!**",
-                reply_markup=InlineKeyboardMarkup(buttons),
-                parse_mode=ParseMode.MARKDOWN,
-                quote=True,
-            )
-            return
+    # 🔹 (ForceSub check removed from here) 🔹
 
     # 🔹 Repair Mode
     admin_settings = await get_admin_settings()
@@ -275,9 +242,45 @@ async def get_result(search, page_no, user_id, username):
     return None, None
 
 
-# --- FILE SENDER ---
+# --- FILE SENDER (with FSUB check + auto-delete reply) ---
 
 async def send_file(bot, chat_id, file_id):
+    # 🔹 ForceSub check
+    if FORCE_SUB_ENABLED and FORCE_SUB_CHANNELS:
+        not_joined = []
+        for channel_id in FORCE_SUB_CHANNELS:
+            try:
+                user = await bot.get_chat_member(int(channel_id), chat_id)
+                if user.status == ChatMemberStatus.BANNED:
+                    await bot.send_message(chat_id, "🚫 You are banned from one of the required channels.")
+                    return
+            except UserNotParticipant:
+                not_joined.append(channel_id)
+            except Exception as e:
+                LOGGER.warning(f"ForceSub error for {channel_id}: {e}")
+
+        if not_joined:
+            buttons = []
+            for ch_id in not_joined:
+                try:
+                    chat = await bot.get_chat(int(ch_id))
+                    link = chat.invite_link or await chat.export_invite_link()
+                    btn = InlineKeyboardButton(f"📢 Join {chat.title}", url=link)
+                except Exception:
+                    link = f"https://t.me/{str(ch_id).replace('-100', '')}"
+                    btn = InlineKeyboardButton("📢 Join Channel", url=link)
+                buttons.append([btn])
+            buttons.append([InlineKeyboardButton("✅ Joined All", callback_data="refresh_check")])
+
+            await bot.send_message(
+                chat_id,
+                "**Please join all required update channels to get the file!**",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+
+    # 🔹 Proceed with file sending
     filedetails = await get_file_details(file_id)
     admin_settings = await get_admin_settings()
     for files in filedetails:
@@ -290,6 +293,7 @@ async def send_file(bot, chat_id, file_id):
         if admin_settings.get("caption_uname"):
             f_caption += "\n" + admin_settings.get("caption_uname")
 
+        # Send the file
         msg = await bot.send_cached_media(
             chat_id=chat_id,
             file_id=file_id,
@@ -297,12 +301,19 @@ async def send_file(bot, chat_id, file_id):
             parse_mode=ParseMode.MARKDOWN,
         )
 
+        # 🔹 Send auto-delete info message
         if admin_settings.get("auto_delete"):
             delay_dur = admin_settings.get("auto_delete")
+            notify = await bot.send_message(
+                chat_id,
+                f"📁 File sent! This message and file will auto-delete in {delay_dur} seconds ⏳",
+            )
             await asyncio.sleep(delay_dur)
-            await msg.delete()
-            await bot.send_message(chat_id, "🗑️ File deleted after auto-delete timer.")
-
+            try:
+                await msg.delete()
+                await notify.delete()
+            except Exception as e:
+                LOGGER.warning(f"Failed to auto-delete: {e}")
 
 # --- FILE CALLBACK ---
 
