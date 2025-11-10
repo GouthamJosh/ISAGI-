@@ -1,4 +1,4 @@
-#CREDITS TO @CyberTGX
+#CREDITS TO @im_goutham_josh
 
 import asyncio
 from pyrogram import Client, filters
@@ -8,10 +8,9 @@ from mfinder import ADMINS, LOGGER
 from mfinder.db.files_sql import save_file, delete_file
 from mfinder.utils.helpers import edit_caption
 
-
 lock = asyncio.Lock()
 media_filter = filters.document | filters.video | filters.audio
-
+SKIP = 0  # Global skip variable, default 0
 
 @Client.on_message(filters.private & filters.user(ADMINS) & media_filter)
 async def index_files(bot, message):
@@ -46,7 +45,6 @@ async def index_files(bot, message):
                 f"Unable to start indexing, either the channel is private and bot is not an admin in the forwarded chat, or you forwarded message as copy.\nError caused due to <code>{e}</code>"
             )
 
-
 @Client.on_callback_query(filters.regex(r"^index .* \d+$"))
 async def index(bot, query):
     user_id = query.from_user.id
@@ -67,7 +65,10 @@ async def index(bot, query):
     async with lock:
         try:
             total = last_msg_id + 1
-            current = 2
+            current = SKIP + 2  # Start from SKIP + 2 to skip messages
+            if current >= total:
+                await msg.edit("Skip value is too high, no messages to index.")
+                return
             counter = 0
             while True:
                 try:
@@ -118,13 +119,24 @@ async def index(bot, query):
         else:
             await msg.edit(f"Total **{total_files}** files saved to database!")
 
-
 @Client.on_message(filters.command(["index"]) & filters.user(ADMINS))
 async def index_comm(bot, update):
     await update.reply(
         "Now please forward the **last message** of the channel you want to index & follow the steps. Bot must be admin of the channel if the channel is private."
     )
 
+@Client.on_message(filters.command(["setskip"]) & filters.user(ADMINS))
+async def set_skip(bot, message):
+    global SKIP
+    try:
+        skip_value = int(message.text.split()[1])
+        if skip_value < 0:
+            await message.reply("Skip value must be non-negative.")
+            return
+        SKIP = skip_value
+        await message.reply(f"Skip set to {SKIP}. Indexing will start from message ID {SKIP + 2}.")
+    except (IndexError, ValueError):
+        await message.reply("Usage: /setskip <number>\nExample: /setskip 100")
 
 @Client.on_message(filters.command(["delete"]) & filters.user(ADMINS))
 async def delete_files(bot, message):
@@ -150,7 +162,6 @@ async def delete_files(bot, message):
                 
     except Exception as e:
         LOGGER.warning("Error occurred while deleting file: %s", str(e))
-
 
 @Client.on_callback_query(filters.regex(r"^can-index$"))
 async def cancel_index(bot, query):
