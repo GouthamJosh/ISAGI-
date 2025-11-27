@@ -9,17 +9,27 @@ media_filter = filters.document | filters.video | filters.audio
 @Client.on_message(filters.chat(DB_CHANNELS) & media_filter)
 async def live_index(bot, message):
     try:
-        for file_type in ("document", "video", "audio"):
-            media = getattr(message, file_type, None)
+        # detect media type
+        media = None
+        file_type = None
 
-            if not media:
+        for f_type in ("document", "video", "audio"):
+            obj = getattr(message, f_type, None)
+            if obj is not None:
+                media = obj
+                file_type = f_type
                 break
-            file_name = media.file_name
-            file_name = edit_caption(file_name)
-            media.file_type = file_type
-            # media.caption = message.caption if message.caption else file_name
-            media.caption = file_name
-            await save_file(media)
+
+        if not media:
+            return  # no valid media found
+
+        # process file name
+        file_name = edit_caption(media.file_name)
+
+        media.file_type = file_type
+        media.caption = file_name   # or use original caption if needed
+
+        await save_file(media)
 
     except Exception as e:
         LOGGER.warning("Error occurred while saving file: %s", str(e))
