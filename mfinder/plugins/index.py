@@ -111,7 +111,7 @@ async def index(bot, query):
                 current += BATCH_SIZE
                 
                 # Update progress less frequently (every 500 files)
-                if total_files % 100 == 0:
+                if total_files % 50 == 0:
                     try:
                         await msg.edit(f"🔦Total messages fetched: {current}\n✅Total files saved: {total_files}")
                     except FloodWait as e:
