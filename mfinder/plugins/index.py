@@ -11,7 +11,7 @@ from mfinder.utils.helpers import edit_caption
 
 lock = asyncio.Lock()
 media_filter = filters.document | filters.video | filters.audio
-SKIP = 0  # Global skip variable, default 0
+SKIP = 0  # Global skip variable
 
 
 # --------------------------------------------------------------------------------
@@ -33,12 +33,10 @@ async def index_files(bot, message):
 
         await bot.get_messages(chat_id, last_msg_id)
 
-        kb = InlineKeyboardMarkup(
-            [
-                [InlineKeyboardButton("Proceed", callback_data=f"index {chat_id} {last_msg_id}")],
-                [InlineKeyboardButton("Cancel", callback_data="can-index")],
-            ]
-        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Proceed", callback_data=f"index {chat_id} {last_msg_id}")],
+            [InlineKeyboardButton("Cancel", callback_data="can-index")],
+        ])
 
         await bot.send_message(
             user_id,
@@ -55,13 +53,12 @@ async def index_files(bot, message):
 
 
 # --------------------------------------------------------------------------------
-#  MAIN INDEXING PROCESS — with ETA, SPEED, PROGRESS BAR
+#  MAIN INDEXING PROCESS — FIXED (NO CONSTANT DOCUMENT BUG)
 # --------------------------------------------------------------------------------
 @Client.on_callback_query(filters.regex(r"^index .* \d+$"))
 async def index(bot, query):
     user_id = query.from_user.id
 
-    # Extract chat_id and last_msg_id
     parts = query.data.split()
     chat_id_str = parts[1]
     last_msg_id = int(parts[2])
@@ -71,14 +68,11 @@ async def index(bot, query):
     except ValueError:
         chat_id = chat_id_str
 
-    # Remove confirmation message
     await query.message.delete()
     msg = await bot.send_message(user_id, "Processing Index...⏳")
 
     BATCH_SIZE = 50
     total_files = 0
-
-    # For ETA / SPEED
     start_time = time.time()
 
     async with lock:
@@ -90,67 +84,72 @@ async def index(bot, query):
                 return await msg.edit("Skip value is too high, no messages to index.")
 
             while current < total:
-
-                # ---------------------------------------
-                # Build batch id list
-                # ---------------------------------------
                 batch_ids = list(range(current, min(current + BATCH_SIZE, total)))
 
                 try:
-                    messages = await bot.get_messages(chat_id=chat_id, message_ids=batch_ids, replies=0)
+                    messages = await bot.get_messages(chat_id, batch_ids, replies=0)
                 except FloodWait as e:
                     LOGGER.warning(f"FloodWait: sleeping for {e.value}")
                     await asyncio.sleep(e.value)
                     continue
                 except Exception as e:
-                    LOGGER.warning(f"Error fetching batch: {e}")
+                    LOGGER.warning(f"Fetch error: {e}")
                     current += BATCH_SIZE
                     continue
 
-                # ---------------------------------------
-                # Prepare save tasks (for concurrency)
-                # ---------------------------------------
                 save_tasks = []
+
                 for message in messages:
                     if not message:
                         continue
 
-                    for file_type in ("document", "video", "audio"):
-                        media = getattr(message, file_type, None)
-                        if media:
-                            file_name = edit_caption(media.file_name)
-                            media.file_type = file_type
-                            media.caption = file_name
-                            save_tasks.append(save_file(media))
-                            break
+                    media = None
+                    file_type = None
 
-                # Save concurrently
+                    if message.document:
+                        media = message.document
+                        file_type = "document"
+                    elif message.video:
+                        media = message.video
+                        file_type = "video"
+                    elif message.audio:
+                        media = message.audio
+                        file_type = "audio"
+
+                    if not media:
+                        continue
+
+                    file_data = {
+                        "file_id": media.file_id,
+                        "file_unique_id": media.file_unique_id,
+                        "file_name": edit_caption(media.file_name),
+                        "file_size": media.file_size,
+                        "mime_type": media.mime_type,
+                        "file_type": file_type,
+                        "caption": edit_caption(media.file_name),
+                    }
+
+                    save_tasks.append(save_file(file_data))
+
                 if save_tasks:
                     results = await asyncio.gather(*save_tasks, return_exceptions=True)
                     for r in results:
                         if not isinstance(r, Exception):
                             total_files += 1
 
-                # Move to next batch
                 current += BATCH_SIZE
 
-                # ---------------------------------------
-                # Progress Bar + ETA + Speed Calculation
-                # ---------------------------------------
                 elapsed = time.time() - start_time
                 speed = total_files / elapsed if elapsed > 0 else 0
-
-                # Percent
                 percent = (current / total) * 100
-                bar_filled = int(percent // 5)  # 20-segment bar
+
+                bar_filled = int(percent // 5)
                 bar = "█" * bar_filled + "░" * (20 - bar_filled)
 
-                # ETA
                 remaining = total - current
                 eta_seconds = remaining / (speed * BATCH_SIZE) if speed > 0 else 0
                 eta_str = time.strftime("%H:%M:%S", time.gmtime(eta_seconds))
 
-                # Update every 50 files
                 try:
                     await msg.edit(
                         f"📁 **Indexing in progress...**\n\n"
@@ -165,8 +164,7 @@ async def index(bot, query):
 
         except Exception as e:
             LOGGER.exception(e)
-            return await msg.edit(f"Error: {e}")
-
+            await msg.edit(f"Error: {e}")
         else:
             await msg.edit(
                 f"🎉 **Index Completed!**\n\n"
